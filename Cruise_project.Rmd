@@ -1,0 +1,250 @@
+---
+title: "Cruise_project"
+date: 'December 2022'
+author: 'Milena Atanasova, Annamaria Culpo'
+output:
+  html_document:
+    df_print: paged
+    theme: readable
+    toc: true
+    toc_float: true
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+This project has been elaborated for the course of “Laboratory of customers and business analytics” at the University of Trento, a.y. 2022 – 2023.
+A cruise company (e.g. Costa) would like to add a new cruise line proposal for the summer season of 2023. It is considering making a customer survey and conducting a traditional conjoint analysis of potential service profiles 
+
+# Importing and exploring the dataset
+First, we import the data about the Cruise survey for conjoint analysis. It is in long format.
+```{r}
+library(lme4)
+library(lattice)
+cruise <- read.csv("Cruise_data.csv", sep=";")
+str(cruise)
+```
+Let's understand how many respondents there are.
+```{r}
+table(cruise$resp.id) 
+```
+```{r}
+unique(table(cruise$resp.id))
+
+```
+There are 300 respondents, each one rating 20 product profiles. Now we check if the attributes are balanced among all the product profiles.
+```{r}
+sapply(cruise[,3:8], table)
+```
+The level "Animation" of the Amenities attribute is a bit underrepresented with respect to the other levels, as is for "Egypt" in the attribute Destination. One possible explanation for the latter could be that Egypt is a new exotic destination still under exploration. From the output we can also see that "adult" is the age category that is more present than the old and young individuals. This could be explained by the fact that it is the kind of customer that usually goes on a cruise. 
+```{r}
+prop.table(table(cruise$Brand))
+prop.table(table(cruise$Destination))
+prop.table(table(cruise$Price))
+prop.table(table(cruise$Duration))
+prop.table(table(cruise$Amenities))
+prop.table(table(cruise$age))
+```
+The results described above could also be seen in proportional terms.
+
+We transform character and integer variables in qualitative variables (except for resp.id and rating) because they have just a few levels
+```{r}
+cruise$Price <- as.factor(cruise$Price) 
+cruise$Duration <- as.factor(cruise$Duration) 
+cruise$Destination <- as.factor(cruise$Destination)
+cruise$Brand <- as.factor(cruise$Brand)
+cruise$Amenities <- as.factor(cruise$Amenities)
+cruise$age <- as.factor(cruise$age)
+```
+
+# Linear regression model
+At first, we fit a classical linear regression model for the cruise ratings to later compare it with the multilevel linear model.
+```{r}
+lmod <- lm(rating ~ Brand + Destination + Price + Duration + Amenities, data=cruise)
+summary(lmod)
+```
+We change the reference level of Destination from Egypt to Sicily. In this way, we can understand better the role of the new destination "Egypt" and its possible identification as a niche service. 
+```{r}
+cruise <- within(cruise, Destination <- relevel(Destination, ref="Sicily"))
+```
+Now we refit the linear regression model.
+```{r}
+lmod2 <- lm(rating ~ Brand + Destination + Price + Duration + Amenities, data=cruise)
+summary(lmod2)
+```
+
+All coefficients, apart from the one for the brand Royal Caribbean, are quite different from zero, so it could be that they are important for customer ratings. In particular, the Brand (especially MSC), the Amenities and the Duration have a stronger effect with respect to the other attributes. 
+It seems that customers on average prefer longer voyages, because both the coefficients of a duration of 14 and 21 days are positive. In particular, the coefficient related to a duration of 21 days is the greatest. 
+When it comes to price, at first sight the estimates can seem unexpected because the highest price is preferred to the lowest one, since it has a positive coefficient. Instead, the medium price (700 euros) has a negative effect on rankings. This could be potentially explained by the fact that lower- and middle-class customers look primarily to the price, choosing the lowest available; on the contrary, upper-class respondents may at first look at the quality and the services offered by the cruise, hence they might consider a higher price as a signal of a better experience.
+Since our data has a grouping structure, the standard errors and the p-values are not trustable, because there is correlation between rankings given by the same respondents. Hence, one of the main assumption of the linear regression model (the independence of the observations) is not respected. So, it could be better to fit a multilevel linear model.
+
+# Random intercpet multilevel linear model
+Now we fit the random intercept multilevel linear model for the cruise ratings using function "lmer()".
+```{r}
+mlmRI <- lmer(rating ~ Brand + Destination + Price + Duration + Amenities + (1 | resp.id), data=cruise)
+summary(mlmRI)
+```
+The estimates of the coefficients are the same of the linear regression model. However, with the random intercept multilevel linear model we can trust the standard errors and the p-values. From the summary of the model, we can see that the between-group variation is `r as.data.frame(VarCorr(mlmRI))$vcov[1]`, while the within-group variation is `r as.data.frame(VarCorr(mlmRI))$vcov[2]`. In our case, one group corresponds to a single respondent.
+The estimate of the intercept in the summary represents the average of the distribution of the intercepts that vary across the respondents. 
+
+Keeping in mind that our model could be too much complex, having several attributes with corresponding levels, we may try to remove one of them and see how the model performance changes. The attribute that we consider to eliminate to obtain the restricted model is the Destination, since the estimates of its levels have not a great magnitude.
+```{r}
+RestrmlmRI <- lmer(rating ~ Brand + Price + Duration + Amenities + (1 | resp.id), data=cruise) # Restricted model
+anova(RestrmlmRI, mlmRI)
+```
+Since the AIC and BIC of the full model are lower than the restricted model, the Destination attribute has to be included in order to have a greater goodness of fit, even if we lose degrees of freedom because of the estimation of 3 more parameters. Moreover, since the p-value is well below 5%, there is sufficient empirical evidence against the null hypothesis (for which the two models are equal). So we continue our analysis with all variables. 
+
+## Confidence intervals of the random intercept model
+We now compute the confidence intervals for the estimates.
+```{r}
+set.seed(5678)
+CI <- confint(mlmRI, method="boot", boot.type="perc")
+CI
+```
+The only parameter whose confidence interval includes zero is the one related to the brand Royal Caribbean (as we can see from the plot below), which is also the one with the lowest value in absolute terms. 
+```{r}
+rnames <- rownames(CI)
+newCI <- cbind(CI, rnames)
+newCI <- as.data.frame(newCI)
+newCI$`2.5 %`<- as.numeric(newCI$`2.5 %`)
+newCI$`97.5 %`<- as.numeric(newCI$`97.5 %`)
+newCI$rnames <- as.factor(newCI$rnames)
+colnames(newCI) <- c("lower", "upper", "group")
+
+library(ggplot2)
+
+ggplot(newCI) +
+  geom_segment( aes(x=group, xend=group, y=lower, yend=upper), color="grey") +
+  geom_point( aes(x=group, y=lower), color=rgb(0.2,0.7,0.1,0.5), size=3 ) +
+  geom_point( aes(x=group, y=upper), color=rgb(0.7,0.2,0.1,0.5), size=3 ) +
+  coord_flip()+
+  ggtitle("Confidence intervals") +
+  xlab("") +
+  ylab("Estimates")
+```
+From a visual analysis, we can see that intervals are small, meaning that our estimates are quite precise. Moreover, it is easier to notice that all the estimates are positive, except for the ones of the Brand MSC and the Price of 700 euros. As we are assuming the point of view of Costa, we can appreciate the fact that our brand seems to be stronger in shaping the consumers' preferences than the MSC one. Instead, we may consider to improve our brand's performance/image with respect to the other main competitor, which is Royal Caribbean. 
+
+## Fixed and random effects
+Now we can distinguish between the fixed effects and the random effects of the model.
+```{r}
+fixef(mlmRI)
+ranef(mlmRI)
+dotplot(ranef(mlmRI))
+```
+The fixed effect of the intercept is the average of the distribution of the intercept parameters. Instead the random effects are the values that are summed to the intercept fixed effect to obtain the estimates of the intercept for each respondent. These estimates can be seen in the plot with their confidence intervals. Since they vary from values lower than -1 to values grater than 1, they have a non-negligible variance, which corresponds to the between-group variation. The first six estimates of the intercepts for every respondent are shown below, together with the ones of the other fixed parameters.
+```{r}
+head(coef(mlmRI)$resp.id) 
+```
+We extract the intercepts and plot their distribution using a density and a box plot.
+```{r}
+interc <- coef(mlmRI)$resp.id[,1]
+par(mfrow=c(1,2))
+plot(density(interc), main="Kernel density") # kernel density
+grid()
+boxplot(interc, main="Box plot") # box plot
+grid()
+mean(interc)
+median(interc)
+```
+From the plots, we can see that the highest frequency is in correspondence of 1.2 - 1.3, which is congruent with the estimate of the average intercept. Also the median is similar to the mean, as we can notice from the boxplot. The boxplot also highlights that the difference between the highest intercept and the median is greater (in absolute terms) than the one between the lowest value and the median. 
+The density plot shows that there is a second bump, with a lower frequency than the first one. This could justify the fact that the mean is greater than the median, because it is pull to the right.
+
+## Intraclass correlation coefficient and ad-hoc R-squared of the random intercept model
+In order to assess the relevance of the grouping structure, we compute the intraclass correlation coefficient.
+```{r}
+par(mfrow=c(1,1))
+vc <- as.data.frame(VarCorr(mlmRI))$vcov
+icc <- function(x) {
+  vc <- as.data.frame(VarCorr(x))$vcov
+  vc[1]/sum(vc)
+}
+icc(mlmRI)
+
+```
+The across-groups variability, which represents the heterogeneity between groups, explains 14% of the overall variability of the model. This is a non-negligible share, so using the grouping structure improves the estimates of the parameters. 
+
+Now we analyze the share of variance explained by the random intercept model, computing the ad hoc R-squared for models with grouping structure.  
+```{r}
+NullModel <- lmer(rating ~ 1 + (1 | resp.id), data=cruise) #null model: we include just the intercept and the random effects for the intercept
+R2level <- function(model){
+  NM <- update(model, paste("~ 1 + (1 |", names(model@flist), ")"))
+  vcNM <- as.data.frame(VarCorr(NM))$vcov
+  vc <- as.data.frame(VarCorr(model))$vcov
+  1 - sum(vc)/sum(vcNM)
+}
+R2level(mlmRI)
+```
+The goodness-of-fit of our model is quite satisfying because it explains about 61% of the variance of the ratings above that accounted for in the null model. 
+
+## Intercept estimates according to different age groups
+```{r}
+interc <- coef(mlmRI)$resp.id[,1]
+groups <- cruise$age[seq(1, length(cruise$age), 20)]
+boxplot(interc ~ groups)
+```
+The boxplots highlight that the average values of the intercepts vary across groups of respondents with different age. In particular, controlling for the other predictors, adults assign the highest ratings to the cruise experience, followed by young respondents and, at last, the older ones. This may imply that the cruise company should focus on adults as their main target customers.
+
+```{r}
+library(ggplot2)
+interc_age <- as.data.frame(cbind(interc, groups))
+interc_age$groups <- as.factor(interc_age$groups)
+levels(interc_age$groups) <- c("adult", "old", "young")
+
+# Basic density plot in ggplot2
+ggplot(interc_age, aes(x = interc, colour = groups)) +
+  geom_density() +
+  theme_classic() +
+  ggtitle("Density plots of the intercepts according to age groups") + 
+  xlab("intercept estimates")
+```
+As we have already seen in the boxplots above, the mean of the density distributions of the intercepts are different. Furthermore, there are differences between the variances of the groups. In particular, adults present the greatest heterogeneity, whereas young and old people seem to have quite similar preferences, controlling for the other predictors. 
+
+# Random slope model
+Now we fit a model which estimates a random effect parameter for every attribute per each respondent. 
+```{r}
+mlmRS <- lmer(rating ~ Brand + Destination + Price + Duration + Amenities + (Brand + Destination + Price + Duration + Amenities | resp.id),
+              data=cruise)
+summary(mlmRS)
+```
+As we may expect, the estimates of the parameters are the same of the random intercept model. However, in this case they represent the averages of the distributions of the estimates calculated for every respondent. 
+
+In contrast with the previous random intercept model, now we can see that the estimates of either the intercept and the other predictors vary across respondents:
+```{r}
+head(ranef(mlmRS)$resp.id)
+dotplot(ranef(mlmRS), cex=0.4)
+```
+From the dotplots of the random effects of the parameters, it emerges that the ones with the highest variability are the intercepts and the amenities (which have also the highest variances in the summary of the model). Instead, duration and destination does not seem to have a great heterogeneity between respondents. Hence, we now fit some models where we use these variables just with their fixed effects and we compare the performances with the full random slope model. 
+```{r}
+# Random slope model with duration and destination having just fixed effects
+mlmRS_dur_des <- lmer(rating ~ Brand + Destination + Price + Duration + Amenities + (Brand + Price + Amenities | resp.id), data=cruise, control=lmerControl(optCtrl=list(maxfun=1e5)))
+summary(mlmRS_dur_des)
+```
+The control parameter has been added in order to avoid an error message linked to the limited number of iterations with respect to the number of parameters in the model.
+```{r}
+anova(mlmRS_dur_des, mlmRS, refit=FALSE)
+```
+```{r}
+# Random slope model with duration having just fixed effects
+mlmRS_dur <- lmer(rating ~ Brand + Destination + Price + Duration + Amenities + (Brand + Price + Amenities + Destination | resp.id), data=cruise, control=lmerControl(optCtrl=list(maxfun=1e5)))
+summary(mlmRS_dur)
+```
+```{r}
+anova(mlmRS_dur, mlmRS, refit=FALSE)
+```
+```{r}
+# Random slope model with destination having just fixed effects
+mlmRS_des <- lmer(rating ~ Brand + Destination + Price + Duration + Amenities + (Brand + Price + Amenities + Duration | resp.id), data=cruise, control=lmerControl(optCtrl=list(maxfun=1e5)))
+summary(mlmRS_des)
+```
+```{r}
+anova(mlmRS_des, mlmRS, refit=FALSE)
+```
+All the three models modified, in which duration and destination have been included alternatively just with their fixed effects, have AIC and BIC values greater than the full random slope model. Since the smaller are the AIC and the BIC, the better is the goodness of fit of a model, we keep using the full model for our analysis. Moreover the p-value is particularly lower than 5%, so there is sufficient empirical evidence to reject the null hypothesis of equivalence between the restricted and the full models. 
+
+```{r}
+# TODO: comment on correlations and conclusions
+```
+
