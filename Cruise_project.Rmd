@@ -17,7 +17,7 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 This project has been elaborated for the course of “Laboratory of customers and business analytics” at the University of Trento, a.y. 2022 – 2023.
-A cruise company (e.g. Costa) would like to add a new cruise line proposal for the summer season of 2023. It is considering making a customer survey and conducting a traditional conjoint analysis of potential service profiles 
+A cruise company (e.g.  Costa) would like to add a new cruise line proposal for the summer season of 2023. It is considering making a customer survey and conducting a traditional conjoint analysis of potential service profiles 
 
 # Importing and exploring the dataset
 First, we import the data about the Cruise survey for conjoint analysis. It is in long format.
@@ -89,6 +89,8 @@ summary(mlmRI)
 ```
 The estimates of the coefficients are the same of the linear regression model. However, with the random intercept multilevel linear model we can trust the standard errors and the p-values. From the summary of the model, we can see that the between-group variation is `r as.data.frame(VarCorr(mlmRI))$vcov[1]`, while the within-group variation is `r as.data.frame(VarCorr(mlmRI))$vcov[2]`. In our case, one group corresponds to a single respondent.
 The estimate of the intercept in the summary represents the average of the distribution of the intercepts that vary across the respondents. 
+
+Looking at the correlation of fixed effects, the highest values can be observed between levels of the same attributes. For example, the brand Royal Caribbean is positively correlated with MSC and the same happens for destinations Greece and Egypt and Greece and Spain. The highest positive correlation is between Sport and Spa amenities (0.735); it indicates that respondents who assign a positive ranking to profiles containing sport amenities, tend also to assign high ratings to profiles with Spa. 
 
 Keeping in mind that our model could be too much complex, having several attributes with corresponding levels, we may try to remove one of them and see how the model performance changes. The attribute that we consider to eliminate to obtain the restricted model is the Destination, since the estimates of its levels have not a great magnitude.
 ```{r}
@@ -211,6 +213,8 @@ summary(mlmRS)
 ```
 As we may expect, the estimates of the parameters are the same of the random intercept model. However, in this case they represent the averages of the distributions of the estimates calculated for every respondent. 
 
+Analyzing the correlations of the fixed effects, as we have seen also in the random intercept model above, the values with the greatest magnitude are the ones between the levels belonging to the same attributes. In particular, the highest positive correlation can be detected between destinations Spain and Greece. Hence, if a respondent tends to evaluate positively a cruise profile which is headed to Spain, he would give also a high positive score to a profile destined to Greece. 
+
 In contrast with the previous random intercept model, now we can see that the estimates of either the intercept and the other predictors vary across respondents:
 ```{r}
 head(ranef(mlmRS)$resp.id)
@@ -244,7 +248,92 @@ anova(mlmRS_des, mlmRS, refit=FALSE)
 ```
 All the three models modified, in which duration and destination have been included alternatively just with their fixed effects, have AIC and BIC values greater than the full random slope model. Since the smaller are the AIC and the BIC, the better is the goodness of fit of a model, we keep using the full model for our analysis. Moreover the p-value is particularly lower than 5%, so there is sufficient empirical evidence to reject the null hypothesis of equivalence between the restricted and the full models. 
 
+# Random effect coefficients according to age
+
+Let's now consider again the respondent-level variable age and see how random effects are distributed according to it.
+
+We will examine such relationship for the coefficients for which we saw have proven to have an effect on the group-level structure, having variation on a respondent-level.
+
+### Amenities
 ```{r}
-# TODO: comment on correlations and conclusions
+amenities_spa_coefs <- coef(mlmRS)$resp.id[,11]
+groups <- cruise$age[seq(1, length(cruise$age), 20)]
+boxplot(amenities_spa_coefs ~ groups)
+```
+
+Only young consumers exhibit some coefficients lower than zero, which means ther is a higher variability in their preferences.
+
+```{r}
+spa_age <- as.data.frame(cbind(amenities_spa_coefs, groups))
+spa_age$groups <- as.factor(spa_age$groups)
+levels(spa_age$groups) <- c("adult", "old", "young")
+
+ggplot(spa_age, aes(x = amenities_spa_coefs, colour = groups)) +
+  geom_density() +
+  theme_classic() +
+  ggtitle("Density plots of the AmenitiesSpa according to age groups") + 
+  xlab("Estimates")
+```
+
+Again we can see a differentiation in groups' variance, with the one of adult being higher. This is also further explained by the fact that the adult group is much more represented in the sample of respondents.
+
+```{r}
+amenities_sport_coefs <- coef(mlmRS)$resp.id[,12]
+boxplot(amenities_sport_coefs ~ groups)
+```
+
+An interesting thing to notice is that for the group of young respondents, all the coefficients are below zero which means that such kind of customers actually prefer animation than sport facilities on their ship.
+
+```{r}
+sport_age <- as.data.frame(cbind(amenities_sport_coefs, groups))
+sport_age$groups <- as.factor(sport_age$groups)
+levels(sport_age$groups) <- c("adult", "old", "young")
+ggplot(sport_age, aes(x = amenities_sport_coefs, colour = groups)) +
+  geom_density() +
+  theme_classic() +
+  ggtitle("Density plots of the AmenitiesSport according to age groups") + 
+  xlab("Estimate")
+```
+
+Adults value amenities a lot and almost all adults have a coefficient for this variable larger than the coefficients for old and young consumers. For a firm to gain more customers therfore, would better consider adding a cruise line where sport amenities are included in order to gather more middle-aged customers.
+
+### Destination
+
+```{r}
+dest_greece_coefs <- coef(mlmRS)$resp.id[,5]
+boxplot(dest_greece_coefs ~ groups)
+```
+Not a significant difference.
+
+```{r}
+dest_egypt_coefs <- coef(mlmRS)$resp.id[,4]
+boxplot(dest_egypt_coefs ~ groups)
+```
+
+```{r}
+dest_spain_coefs <- coef(mlmRS)$resp.id[,6]
+boxplot(dest_spain_coefs ~ groups)
+```
+
+There are not many significant differnces, apart from the higher variability in estimates for adults and the higher mean and median (more evident for the destinations of Egypt and Spain).
+
+### Price
+
+```{r}
+price700_coefs <- coef(mlmRS)$resp.id[,7]
+boxplot(price700_coefs ~ groups)
+```
+Younger people seem to give a higher negative rank to service profiles with a price of 700 instead of 300. It could be that those kind of customers would like cruises which offer a generally better and more exciting experience.
+
+```{r}
+price1200_coefs <- coef(mlmRS)$resp.id[,8]
+boxplot(price1200_coefs ~ groups)
+```
+
+Also consequently to the above mentioned reasoning, the price of 1200 has a positive effect on average in evaluating profiles for young customers, an effect much less represented for old and adult ones.
+
+
+```{r}
+# TODO: Conclusions 
 ```
 
